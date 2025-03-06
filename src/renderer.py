@@ -663,19 +663,24 @@ class Renderer:
             rank_text = self.header_font.render(f"#{i+1}", True, self.colors['highlight'])
             self.screen.blit(rank_text, (card_rect.x + 10, card_rect.y + 10))
             
-            # Draw koi icon
-            rank_pos = (card_rect.x + 25, card_rect.y + 50)
+            # Draw koi icon - make it smaller and position it properly
+            # Calculate a position that ensures the koi stays within the cell
+            koi_x = card_rect.x + 28  # Adjusted x position
+            koi_y = card_rect.y + 50  # Centered vertically in the card
+            rank_pos = (koi_x, koi_y)
             color = self.get_species_color(species_id)
-            size = record.get('size', 20)
             
-            # Draw the koi with its actual properties
+            # Reduced size for scoreboard display - fixed value instead of using record's size
+            koi_size = 8  # Smaller fixed size to fit within the cell borders
+            
+            # Draw the koi with its actual properties but reduced size
             self.draw_koi_fish_detail(
                 self.screen,
                 rank_pos,
                 color,
-                size / 2,  # Convert diameter to radius
-                num_fins=5,
-                num_nodes=10,
+                koi_size,  # Use smaller fixed size
+                num_fins=3,  # Reduced number of fins for smaller fish
+                num_nodes=6,  # Reduced number of nodes for smaller fish
                 is_predator=False
             )
             
