@@ -4,6 +4,131 @@ from koi import Koi
 from food import LilyPad
 import random
 import json
+from weakref import ref
+import copy
+import gc
+
+class GenerationReporter(neat.reporting.BaseReporter):
+    """Reporter that updates visualization after each generation.
+    
+    Uses weak references to avoid pickling issues with pygame surfaces.
+    """
+    
+    def __init__(self, update_callback):
+        """Initialize with a callback function rather than storing the simulation object.
+        
+        Args:
+            update_callback: Function to call with generation number at end of generation
+        """
+        self.update_callback = update_callback
+        self.current_generation = 0
+    
+    def start_generation(self, generation):
+        """Called at the start of a generation.
+        
+        Args:
+            generation: The current generation number
+        """
+        self.current_generation = generation
+    
+    def end_generation(self, config, population, species_set):
+        """Called at the end of a generation.
+        
+        Args:
+            config: The NEAT configuration
+            population: A dictionary of genomes
+            species_set: The species set
+        """
+        # Use the stored generation number - population is a dict, not the Population object
+        current_gen = self.current_generation
+        
+        # Call the update callback with the current generation
+        if self.update_callback:
+            self.update_callback(current_gen)
+            
+            # Print confirmation
+            print(f"Updated visualization with generation {current_gen}")
+
+class CheckpointReporter(neat.reporting.BaseReporter):
+    """Custom checkpoint reporter that handles pygame objects."""
+    
+    def __init__(self, filename_prefix='neat-checkpoint-', generation_interval=10, simulation=None):
+        self.filename_prefix = filename_prefix
+        self.generation_interval = generation_interval
+        self.current_generation = 0
+        self.simulation = simulation
+    
+    def start_generation(self, generation):
+        """Called at the start of a generation."""
+        self.current_generation = generation
+        
+        # Also update the simulation's generation counter
+        if self.simulation:
+            self.simulation.current_generation = generation
+        
+    def end_generation(self, config, population, species_set):
+        """Called at the end of a generation.
+        
+        Args:
+            config: The NEAT configuration
+            population: A dictionary of genomes
+            species_set: The species set
+        """
+        # Use our stored generation count - population is a dict here
+        if self.current_generation % self.generation_interval == 0:
+            print(f"Saving checkpoint to {self.filename_prefix}{self.current_generation}")
+            
+            try:
+                # Prepare for saving by cleaning up references
+                if self.simulation:
+                    self.simulation.make_checkpoint_compatible()
+                
+                # Create deep copies of objects to ensure no pygame references
+                population_copy = {}
+                for key, genome in population.items():
+                    # Create a clean copy of the genome
+                    if hasattr(genome, 'koi'):
+                        # Store the koi reference temporarily
+                        koi_ref = genome.koi
+                        # Remove the koi reference to avoid circular references
+                        del genome.koi
+                        # Create a deep copy without the koi reference
+                        genome_copy = copy.deepcopy(genome)
+                        # Restore the koi reference to the original genome
+                        genome.koi = koi_ref
+                        # Add the clean genome copy to our population copy
+                        population_copy[key] = genome_copy
+                    else:
+                        # No koi reference, just make a deep copy
+                        population_copy[key] = copy.deepcopy(genome)
+                
+                # Deep copy the species set (careful with any potential pygame references)
+                species_set_copy = copy.deepcopy(species_set)
+                
+                # Create the checkpoint filename
+                filename = f"{self.filename_prefix}{self.current_generation}"
+                
+                # Save the clean copies
+                data = (population_copy, species_set_copy, self.current_generation)
+                with open(filename, 'wb') as f:
+                    import pickle
+                    pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
+                
+                print(f"Successfully saved checkpoint for generation {self.current_generation}")
+                
+                # Force garbage collection to clean up temporary objects
+                del population_copy
+                del species_set_copy
+                gc.collect()
+                
+            except Exception as e:
+                print(f"Error saving checkpoint: {e}")
+                import traceback
+                traceback.print_exc()
+            finally:
+                # Restore the simulation object after checkpointing
+                if self.simulation:
+                    self.simulation.restore_after_checkpoint()
 
 class Simulation:
     def __init__(self, neat_config, sim_config):
@@ -60,6 +185,25 @@ class Simulation:
         
         # Store the population reference
         self.population = None
+        
+        # Track current generation separately
+        self.current_generation = 0
+    
+    def update_generation_display(self, generation):
+        """Update generation display in renderer and scoreboard.
+        
+        This is used as a callback for the GenerationReporter.
+        """
+        # Update our internal generation tracker
+        self.current_generation = generation
+        
+        # Update the renderer's generation counter
+        if self.renderer:
+            self.renderer.set_generation(generation)
+            
+        # Update the scoreboard with the current generation
+        from scoreboard import Scoreboard
+        Scoreboard.set_current_generation(generation)
 
     def spawn_lily_pads(self):
         # Clear any existing lily pads
@@ -76,11 +220,15 @@ class Simulation:
 
     def eval_genomes(self, genomes, config):
         """Evaluate genomes by creating koi fish and running them in the simulation."""
+        # Update the renderer's generation counter at the start of evaluation
+        if self.renderer:
+            self.renderer.set_generation(self.current_generation)
+        
         # Create koi for each genome
         koi_list = []
         genome_to_koi = {}
         
-        print("\n=== Creating Koi Fish ===")
+        print(f"\n=== Creating Koi Fish (Generation {self.current_generation}) ===")
         # Create koi for each genome
         for genome_id, genome in genomes:
             # Initialize genome fitness to 0
@@ -113,6 +261,9 @@ class Simulation:
             koi_list.append(koi_fish)
             genome_to_koi[genome_id] = koi_fish
             genome.koi = koi_fish
+        
+        # Store koi list for checkpointing preparation
+        self._temp_koi_list = koi_list
         
         # Run simulation for multiple trials
         num_trials = 1  # Can be increased for more robust evaluation
@@ -178,45 +329,170 @@ class Simulation:
             from scoreboard import Scoreboard
             species_id = str(best_koi.species_id)
             
-            # Record in scoreboard
+            # Get the current generation number from our internal tracker
+            current_generation = self.current_generation
+            print(f"Current Generation: {current_generation}")
+            
+            # Record in scoreboard with the correct generation number
             Scoreboard.record_species(
                 species_id=species_id,
                 koi=best_koi,
                 fitness=best_koi.highest_fitness,
-                generation=self.population.generation,
+                generation=current_generation,
                 config=config
             )
 
+    def make_checkpoint_compatible(self):
+        """Prepare the simulation object for checkpointing.
+        
+        This temporarily removes references to unpicklable objects.
+        """
+        try:
+            print("Preparing simulation for checkpointing...")
+            
+            # Store renderer reference to be restored after checkpointing
+            self._temp_renderer = self.renderer
+            
+            # Remove renderer reference during pickling
+            self.renderer = None
+            
+            # Clear out any other potential pygame references
+            for koi_fish in getattr(self, '_temp_koi_list', []):
+                if hasattr(koi_fish, 'make_pickle_safe'):
+                    koi_fish.make_pickle_safe()
+            
+            # Force garbage collection to clean up any dangling references
+            gc.collect()
+            
+            print("Simulation ready for checkpointing")
+        except Exception as e:
+            print(f"Error preparing simulation for checkpointing: {e}")
+            import traceback
+            traceback.print_exc()
+        
+    def restore_after_checkpoint(self):
+        """Restore the simulation object after checkpointing."""
+        try:
+            print("Restoring simulation after checkpointing...")
+            
+            # Restore renderer reference
+            if hasattr(self, '_temp_renderer'):
+                self.renderer = self._temp_renderer
+                del self._temp_renderer
+            
+            # Restore any other objects that were modified
+            for koi_fish in getattr(self, '_temp_koi_list', []):
+                if hasattr(koi_fish, 'restore_after_pickle'):
+                    koi_fish.restore_after_pickle()
+            
+            print("Simulation restored after checkpointing")
+        except Exception as e:
+            print(f"Error restoring simulation after checkpointing: {e}")
+            import traceback
+            traceback.print_exc()
+
     def run(self):
         """Run the NEAT algorithm to evolve a network to solve the task."""
-        # Create the population
-        population = neat.Population(self.neat_config)
-        
-        # Store the population for use in eval_genomes
-        self.population = population
-        
-        # Add a reporter to show progress in the terminal
-        population.add_reporter(neat.StdOutReporter(True))
-        stats = neat.StatisticsReporter()
-        population.add_reporter(stats)
-        
-        # Set up checkpoint every 10 generations
-        population.add_reporter(neat.Checkpointer(10))
-        
-        # Run for up to n generations
-        num_generations = self.sim_config.get('num_generations', 100)
-        winner = population.run(self.eval_genomes, num_generations)
-        
-        # Display the winning genome
-        print('\nBest genome:\n{!s}'.format(winner))
-        
-        # Save the best genome
-        with open('best_koi.pkl', 'wb') as f:
-            import pickle
-            pickle.dump(winner, f)
+        try:
+            # Create the population
+            population = neat.Population(self.neat_config)
             
-        print("Saved the best koi genome to 'best_koi.pkl'")
+            # Store the population for use in eval_genomes
+            self.population = population
+            
+            # Add a reporter to show progress in the terminal
+            population.add_reporter(neat.StdOutReporter(True))
+            stats = neat.StatisticsReporter()
+            population.add_reporter(stats)
+            
+            # Add custom reporter to update visualization after each generation
+            # Pass a callback function instead of the simulation object
+            population.add_reporter(GenerationReporter(self.update_generation_display))
+            
+            # Set up custom checkpoint reporter instead of the standard one
+            # NOTE: We're using our own custom checkpoint reporter that carefully
+            # handles pygame references and avoids serialization issues
+            checkpoint_reporter = CheckpointReporter(simulation=self)
+            population.add_reporter(checkpoint_reporter)
+            
+            # Don't use NEAT's built-in checkpointer, as it doesn't handle pygame objects
+            # population.add_reporter(neat.Checkpointer(10))
+            
+            # Reset current generation
+            self.current_generation = 0
+            
+            # Update the scoreboard with the initial generation
+            from scoreboard import Scoreboard
+            Scoreboard.set_current_generation(self.current_generation)
+            
+            # If rendering is enabled, update the renderer's generation counter
+            if self.renderer:
+                self.renderer.set_generation(self.current_generation)
+            
+            # Run for up to n generations
+            num_generations = self.sim_config.get('num_generations', 100)
+            winner = population.run(self.eval_genomes, num_generations)
+            
+            # Display the winning genome
+            print('\nBest genome:\n{!s}'.format(winner))
+            
+            # Save the best genome
+            self.save_best_genome(winner)
+            
+            return winner
+        except Exception as e:
+            print(f"Error in simulation run: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+        finally:
+            # Clean up resources
+            self.cleanup()
+
+    def save_best_genome(self, genome):
+        """Save the best genome in a way that avoids pygame serialization issues."""
+        try:
+            print("Saving best genome...")
+            
+            # Make a clean copy of the genome for serialization
+            if hasattr(genome, 'koi'):
+                # Store and remove the koi reference temporarily
+                koi_ref = genome.koi
+                del genome.koi
+                
+                # Now pickle the genome without the pygame-containing koi
+                with open('best_koi.pkl', 'wb') as f:
+                    import pickle
+                    pickle.dump(genome, f)
+                    
+                # Restore the reference
+                genome.koi = koi_ref
+            else:
+                # No koi reference, can pickle directly
+                with open('best_koi.pkl', 'wb') as f:
+                    import pickle
+                    pickle.dump(genome, f)
+                    
+            print("Saved the best koi genome to 'best_koi.pkl'")
+        except Exception as e:
+            print(f"Error saving best genome: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def cleanup(self):
+        """Clean up resources used by the simulation."""
+        # Clear any references to pygame objects
+        if hasattr(self, '_temp_renderer'):
+            self._temp_renderer = None
         
+        # Clear renderer
+        if hasattr(self, 'renderer') and self.renderer is not None:
+            self.renderer = None
+        
+        # Clear lily pads
+        if hasattr(self, 'lily_pads'):
+            self.lily_pads = []
+
     def evaluate_generation(self, koi_list, generation):
         """Evaluate the performance of each koi in the generation."""
         # Sort koi by fitness

@@ -3,6 +3,7 @@ import json
 import pygame
 from simulation import Simulation
 from koi import Koi
+import gc
 
 print("Starting Koi Pond Simulation...")
 
@@ -13,7 +14,8 @@ def run_simulation():
     # Load configuration
     with open('config/simulation-config.json') as f:
         sim_config = json.load(f)
-     # Set up display
+    
+    # Set up display
     screen_width = sim_config['screen_width']
     screen_height = sim_config['screen_height'] 
     screen = pygame.display.set_mode((screen_width, screen_height))
@@ -33,7 +35,10 @@ def run_simulation():
     simulation = Simulation(config, sim_config)
     
     try:
-        simulation.run()
+        # Run the simulation
+        winner = simulation.run()
+        if winner:
+            print("Simulation completed successfully!")
     except KeyboardInterrupt:
         print("\nSimulation stopped by user")
     except Exception as e:
@@ -41,7 +46,16 @@ def run_simulation():
         import traceback
         traceback.print_exc()
     finally:
+        # Explicitly clean up the simulation
+        if 'simulation' in locals():
+            simulation.cleanup()
+            del simulation
+        
+        # Clean up pygame resources
         pygame.quit()
+        
+        # Force garbage collection to clean up any remaining resources
+        gc.collect()
 
 if __name__ == '__main__':
     run_simulation()

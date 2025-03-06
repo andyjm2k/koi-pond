@@ -5,12 +5,14 @@ class Scoreboard:
     
     _species_records = {}
     _initialized = False
+    _current_generation = 0  # Add a class-level generation counter
     
     @classmethod
     def initialize(cls):
         """Initialize the scoreboard."""
         cls._species_records = {}
         cls._initialized = True
+        cls._current_generation = 0
     
     @classmethod
     def record_species(cls, species_id, koi, fitness, generation, config):
@@ -25,6 +27,12 @@ class Scoreboard:
             
         # Get the visual properties directly from the koi
         size = koi.get_radius() * 2  # Convert radius to diameter for size
+        
+        # Track the current generation for debugging and visualization
+        cls._current_generation = max(cls._current_generation, generation)
+        
+        # Print debug information
+        print(f"Recording species {species_id} in generation {generation} (current max: {cls._current_generation})")
         
         # Record the species information
         cls._species_records[species_id] = {
@@ -53,6 +61,7 @@ class Scoreboard:
         """Reset the scoreboard."""
         cls._species_records = {}
         cls._initialized = False
+        cls._current_generation = 0
         
     @classmethod
     def get_top_species(cls, n=5):
@@ -63,3 +72,14 @@ class Scoreboard:
             reverse=True
         )
         return sorted_species[:n]
+        
+    @classmethod
+    def get_current_generation(cls):
+        """Get the current generation number as tracked by the scoreboard."""
+        return cls._current_generation
+    
+    @classmethod
+    def set_current_generation(cls, generation):
+        """Set the current generation number manually."""
+        cls._current_generation = generation
+        print(f"Scoreboard generation explicitly set to {generation}")

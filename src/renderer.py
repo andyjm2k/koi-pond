@@ -44,7 +44,8 @@ class Renderer:
             'highlight': (255, 183, 77),  # Golden highlight
             'card': (51, 77, 122),        # Darker blue cards
             'border': (82, 121, 174),     # Light blue borders
-            'lily_pad': (50, 180, 50)     # Green for lily pads
+            'lily_pad': (50, 180, 50),    # Green for lily pads
+            'bg_darker': (50, 70, 100),   # Darker background for scoreboard
         }
 
     def get_species_color(self, species_id):
@@ -274,6 +275,11 @@ class Renderer:
     def set_generation(self, generation):
         """Set the current generation number for display."""
         self.generation = generation
+        
+        # Update the scoreboard's generation counter as well
+        from scoreboard import Scoreboard
+        if generation > Scoreboard.get_current_generation():
+            Scoreboard.set_current_generation(generation)
     
     def _rotate_point(self, point, origin, angle_rad):
         """Rotate a point around an origin by the given angle in radians."""
@@ -603,22 +609,29 @@ class Renderer:
             pygame.draw.polygon(screen, (255, 255, 255), rotated_teeth_points)
 
     def _render_scoreboard(self):
-        """Render the scoreboard showing top species."""
-        # Fill scoreboard background
-        pygame.draw.rect(self.screen, self.colors['card'], self.scoreboard_rect)
+        """Render the scoreboard panel."""
+        # Draw background
+        pygame.draw.rect(self.screen, self.colors['bg_darker'], self.scoreboard_rect)
+        pygame.draw.rect(self.screen, self.colors['border'], self.scoreboard_rect, 2)
         
         # Draw title
-        title = self.title_font.render("Koi Pond Simulation", True, self.colors['title'])
-        title_rect = title.get_rect(centerx=self.scoreboard_rect.centerx, top=self.scoreboard_rect.top + 20)
-        self.screen.blit(title, title_rect)
+        title_text = self.header_font.render("Scoreboard", True, self.colors['title'])
+        title_rect = title_text.get_rect(centerx=self.scoreboard_rect.centerx, top=self.scoreboard_rect.top + 20)
+        self.screen.blit(title_text, title_rect)
+        
+        # Get generation from scoreboard if available
+        from scoreboard import Scoreboard
+        scoreboard_generation = Scoreboard.get_current_generation()
+        
+        # Use the higher generation value (local or from scoreboard)
+        display_generation = max(self.generation, scoreboard_generation)
         
         # Draw generation counter
-        gen_text = self.header_font.render(f"Generation: {self.generation}", True, self.colors['title'])
+        gen_text = self.header_font.render(f"Generation: {display_generation}", True, self.colors['title'])
         gen_rect = gen_text.get_rect(centerx=self.scoreboard_rect.centerx, top=title_rect.bottom + 20)
         self.screen.blit(gen_text, gen_rect)
         
         # Get top species from scoreboard
-        from scoreboard import Scoreboard
         top_species = Scoreboard.get_top_species(5)
         
         # Draw species cards
