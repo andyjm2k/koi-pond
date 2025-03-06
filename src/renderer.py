@@ -48,6 +48,9 @@ class Renderer:
             'bg_darker': (50, 70, 100),   # Darker background for scoreboard
         }
 
+        # Toggle for showing koi field of vision
+        self.show_vision = True
+
     def get_species_color(self, species_id):
         """Get a consistent color for a given species ID."""
         if species_id not in self.species_colors:
@@ -111,6 +114,12 @@ class Renderer:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 return False
+            elif event.type == pygame.KEYDOWN:
+                # Handle key press events
+                if event.key == pygame.K_v:
+                    # Toggle vision cone display when V is pressed
+                    self.show_vision = not self.show_vision
+                    print(f"Vision display: {'ON' if self.show_vision else 'OFF'}")
         
         # Fill the background with water color
         self.screen.fill(self.colors['water'])
@@ -704,32 +713,33 @@ class Renderer:
             if velocity_x != 0 or velocity_y != 0:  # Only calculate angle if moving
                 angle = math.degrees(math.atan2(velocity_y, velocity_x))
         
-        # Draw vision cone
-        vision_length = 80  # Length of vision cone
-        vision_angle = 120  # Total angle of vision cone
-        
-        # Draw dotted arc for vision range
-        radius = vision_length
-        start_angle = math.radians(angle - vision_angle/2)
-        end_angle = math.radians(angle + vision_angle/2)
-        
-        # Draw dotted arc line
-        points = []
-        num_dots = 20
-        for i in range(num_dots):
-            current_angle = start_angle + (end_angle - start_angle) * i / (num_dots - 1)
-            dot_x = x + radius * math.cos(current_angle)
-            dot_y = y + radius * math.sin(current_angle)
-            points.append((int(dot_x), int(dot_y)))
-        
-        # Draw dots with slight transparency
-        vision_color = (*color, 100)
-        for point in points:
-            pygame.draw.circle(screen, vision_color, point, 1)
-        
-        # Draw lines to first and last dots
-        pygame.draw.line(screen, vision_color, (x, y), points[0], 1)
-        pygame.draw.line(screen, vision_color, (x, y), points[-1], 1)
+        # Draw vision cone (only if show_vision is True)
+        if self.show_vision:
+            vision_length = 80  # Length of vision cone
+            vision_angle = 120  # Total angle of vision cone
+            
+            # Draw dotted arc for vision range
+            radius = vision_length
+            start_angle = math.radians(angle - vision_angle/2)
+            end_angle = math.radians(angle + vision_angle/2)
+            
+            # Draw dotted arc line
+            points = []
+            num_dots = 20
+            for i in range(num_dots):
+                current_angle = start_angle + (end_angle - start_angle) * i / (num_dots - 1)
+                dot_x = x + radius * math.cos(current_angle)
+                dot_y = y + radius * math.sin(current_angle)
+                points.append((int(dot_x), int(dot_y)))
+            
+            # Draw dots with slight transparency
+            vision_color = (*color, 100)
+            for point in points:
+                pygame.draw.circle(screen, vision_color, point, 1)
+            
+            # Draw lines to first and last dots
+            pygame.draw.line(screen, vision_color, (x, y), points[0], 1)
+            pygame.draw.line(screen, vision_color, (x, y), points[-1], 1)
         
         # Get color components
         r, g, b = color

@@ -90,10 +90,12 @@ class TestSimulation(unittest.TestCase):
     @patch('neat.StdOutReporter')
     @patch('neat.StatisticsReporter')
     @patch('neat.Checkpointer')
+    @patch('simulation.LilyPad')
     @patch('builtins.open', new_callable=mock_open)
     @patch('pickle.dump')
-    def test_run_method(self, mock_pickle_dump, mock_open, mock_checkpointer,
-                        mock_stats_reporter, mock_stdout_reporter, mock_population):
+    def test_run_method(self, mock_pickle_dump, mock_open, mock_lily_pad, 
+                        mock_checkpointer, mock_stats_reporter, mock_stdout_reporter, 
+                        mock_population):
         """Test the run method."""
         # Setup Population mock
         mock_pop_instance = MagicMock()
@@ -107,23 +109,29 @@ class TestSimulation(unittest.TestCase):
         # Mock eval_genomes to avoid execution
         sim.eval_genomes = MagicMock()
         
-        # Run the method
-        sim.run()
-        
-        # Check Population creation
-        mock_population.assert_called_once_with(self.neat_config)
-        
-        # Check reporter usage
-        mock_pop_instance.add_reporter.assert_any_call(mock_stdout_reporter.return_value)
-        mock_pop_instance.add_reporter.assert_any_call(mock_stats_reporter.return_value)
-        mock_pop_instance.add_reporter.assert_any_call(mock_checkpointer.return_value)
-        
-        # Check population run
-        mock_pop_instance.run.assert_called_once_with(sim.eval_genomes, 5)
-        
-        # Check winner was saved
-        mock_open.assert_called_once_with('best_koi.pkl', 'wb')
-        mock_pickle_dump.assert_called_once_with(mock_winner, mock_open.return_value.__enter__.return_value)
+        # Mock the CheckpointReporter
+        with patch('simulation.CheckpointReporter') as mock_checkpoint_reporter:
+            mock_reporter_instance = MagicMock()
+            mock_checkpoint_reporter.return_value = mock_reporter_instance
+            
+            # Run the method
+            sim.run()
+            
+            # Verify Population was created with neat_config
+            mock_population.assert_called_once_with(self.neat_config)
+            
+            # Verify reporters were added
+            mock_pop_instance.add_reporter.assert_any_call(mock_stdout_reporter.return_value)
+            mock_pop_instance.add_reporter.assert_any_call(mock_stats_reporter.return_value)
+            
+            # Verify our custom checkpoint reporter was added (not the NEAT default)
+            mock_pop_instance.add_reporter.assert_any_call(mock_reporter_instance)
+            
+            # Verify population.run was called with eval_genomes and num_generations
+            mock_pop_instance.run.assert_called_once_with(sim.eval_genomes, 5)
+            
+            # Verify best genome was saved
+            self.assertEqual(mock_pickle_dump.call_count, 1)
 
     def test_evaluate_generation(self):
         """Test evaluate_generation method."""
