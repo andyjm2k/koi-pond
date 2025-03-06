@@ -285,8 +285,19 @@ class Simulation:
                     nearby_lily_pads = [pad for pad in self.lily_pads if koi.distance_to(pad) < detection_radius]
                     nearby_koi = [other for other in koi_list if other != koi and koi.distance_to(other) < detection_radius]
                     
-                    koi.take_action(nearby_lily_pads, nearby_koi)
+                    # Take action returns False if koi should die
+                    koi_alive = koi.take_action(nearby_lily_pads, nearby_koi)
+                    if not koi_alive:
+                        if koi in koi_list:
+                            koi_list.remove(koi)
+                            continue  # Skip update for dead koi
+                    
                     koi.update(self.lily_pads, koi_list)
+                    
+                    # Check if koi's energy is depleted or it's too hungry - remove it from simulation
+                    if koi.energy <= 0 or koi.hunger >= 200:
+                        if koi in koi_list:
+                            koi_list.remove(koi)
                 
                 # Render current state
                 if self.renderer:

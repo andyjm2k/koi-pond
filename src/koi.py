@@ -118,8 +118,13 @@ class Koi:
         # Store previous position for smooth movement
         self.last_position = self.position
         
-        if self.hunger >= 200:  # Koi dies if too hungry
-            return
+        # If energy is depleted, the koi should die
+        if self.energy <= 0:
+            return False  # Return False to indicate koi should be removed
+            
+        # Koi also dies if too hungry
+        if self.hunger >= 200:
+            return False  # Return False to indicate koi should be removed
             
         # Get inputs for the neural network
         inputs = self.get_inputs(nearby_lily_pads, nearby_koi)
@@ -198,7 +203,9 @@ class Koi:
             max(0, min(self.environment_config['width'], self.position[0])),
             max(0, min(self.environment_config['height'], self.position[1]))
         )
-    
+        
+        return True  # Return True to indicate koi remains alive
+
     def get_closest_lily_pad_info(self, nearby_lily_pads):
         # Default values if no lily pads are nearby
         result = {
@@ -481,17 +488,15 @@ class Koi:
         return max(0, fitness)
 
     def get_radius(self):
-        """Get the radius of the koi based on its energy."""
+        """Get the radius of the koi. 
+        
+        Size is now fixed and no longer depends on energy.
+        Energy is still tracked internally for fitness and survival.
+        """
+        # Fixed size, regardless of energy
         base_radius = 10
         
-        # Set a minimum size regardless of energy to prevent excessive shrinking
-        min_size_factor = 0.8  # Minimum size is 80% of base radius
-        
-        # Normalize energy to 0-1 range with a boost to prevent small fish
-        energy_factor = self.energy / 100.0  # Normalize energy to 0-1 range
-        
-        # Scale between min_size_factor and 150% of base radius
-        return base_radius * max(min_size_factor, min(1.5, energy_factor))  
+        return base_radius  # Consistent size for all koi regardless of energy
 
     @staticmethod
     def generate_scientific_name():
