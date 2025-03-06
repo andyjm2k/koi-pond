@@ -187,8 +187,10 @@ class Koi:
             self.position[1] + direction_y * actual_speed
         )
         
-        # Increase hunger proportionally to movement
-        movement_cost = self.distance_to((self.last_position[0], self.last_position[1])) * 0.1
+        # Increase hunger proportionally to movement, but with a smaller factor
+        # Reduce the movement cost to prevent excessive hunger increase and energy drop
+        movement_distance = self.distance_to((self.last_position[0], self.last_position[1]))
+        movement_cost = movement_distance * 0.05  # Reduced from 0.1 to 0.05
         self.hunger += movement_cost
         
         # Constrain position to environment boundaries
@@ -437,11 +439,12 @@ class Koi:
                 lily_pads.remove(lily_pad)  # Remove the consumed lily pad
                 self.food_consumed += 1  # Track food consumption
                 
-        # Increase hunger over time
-        self.hunger += 0.1
+        # Increase hunger over time, but at a reduced rate
+        self.hunger += 0.05  # Reduced from 0.1 to 0.05
         
-        # Update energy based on hunger
-        self.energy = max(0, 100 - self.hunger / 2)
+        # Update energy based on hunger, with a more gradual decline
+        # Adjust the formula to make energy decrease more slowly
+        self.energy = max(0, 100 - self.hunger / 3)  # Changed from /2 to /3 for slower energy reduction
         
         # Calculate and update fitness
         current_fitness = self.calculate_fitness()
@@ -480,8 +483,15 @@ class Koi:
     def get_radius(self):
         """Get the radius of the koi based on its energy."""
         base_radius = 10
+        
+        # Set a minimum size regardless of energy to prevent excessive shrinking
+        min_size_factor = 0.8  # Minimum size is 80% of base radius
+        
+        # Normalize energy to 0-1 range with a boost to prevent small fish
         energy_factor = self.energy / 100.0  # Normalize energy to 0-1 range
-        return base_radius * max(0.5, min(1.5, energy_factor))  # Scale between 50% and 150% of base radius
+        
+        # Scale between min_size_factor and 150% of base radius
+        return base_radius * max(min_size_factor, min(1.5, energy_factor))  
 
     @staticmethod
     def generate_scientific_name():
