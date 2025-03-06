@@ -1,0 +1,18 @@
+{
+    "pond_size": 1000,
+    "episode_length": 1200,
+    "environment_width": 1000,
+    "environment_height": 1000,
+    "screen_width": 800,
+    "screen_height": 600,
+    "num_generations": 1000,
+    "num_lily_pads": 50,
+    "simulation_steps": 1000,
+    "detection_radius": 200,
+    "starting_hunger": 150,
+    "lily_pad_value": 40,
+    "swimming_cost": 0.05,
+    "edge_penalty": 0.5,
+    "screen": null,
+    "render": true
+}
