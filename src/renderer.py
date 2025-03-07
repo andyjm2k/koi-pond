@@ -262,13 +262,20 @@ class Renderer:
             size = fish.get_radius() if hasattr(fish, 'get_radius') else 10
             is_predator = fish.species_id == 999 if hasattr(fish, 'species_id') else False
             
-            # Calculate velocity vector if both current and last positions are available
-            velocity = None
-            if fish.position and fish.last_position:
+            # Use the koi's orientation and body flex for natural movement
+            orientation = fish.orientation if hasattr(fish, 'orientation') else None
+            body_flex = fish.body_flex if hasattr(fish, 'body_flex') else 0
+            
+            # If no orientation is stored, calculate from velocity as fallback
+            if orientation is None and fish.position and fish.last_position:
                 velocity = (fish.position[0] - fish.last_position[0], 
                            fish.position[1] - fish.last_position[1])
+                if velocity[0] != 0 or velocity[1] != 0:
+                    orientation = math.degrees(math.atan2(velocity[1], velocity[0]))
+                else:
+                    orientation = 0
             
-            self.draw_koi_fish(self.screen, fish.position, color, size, is_predator, velocity)
+            self.draw_koi_fish(self.screen, fish.position, color, size, is_predator, orientation, body_flex)
         
         # Draw the scoreboard
         self._render_scoreboard()
@@ -297,14 +304,14 @@ class Renderer:
         ry = tx * math.sin(angle_rad) + ty * math.cos(angle_rad)
         return (rx + origin[0], ry + origin[1])
         
-    def draw_koi_fish_detail(self, screen, position, color, base_radius, num_fins=5, num_nodes=10, is_predator=False):
+    def draw_koi_fish_detail(self, screen, position, color, base_radius, num_fins=5, num_nodes=10, is_predator=False, body_flex=0):
         """Draw a detailed koi fish with fins."""
         # Calculate dynamic radius based on node count
         radius = max(5, min(20, base_radius * (1 + num_nodes * 0.05)))
         
         # Calculate body dimensions - koi have elongated bodies
         body_length = radius * 3  # More elongated
-        body_width = radius * 1.6
+        body_width = radius * 1.8  # Wider for top-down view
         
         # Get color components
         r, g, b = color
@@ -312,44 +319,46 @@ class Renderer:
         # Calculate orientation - fish should face to the right by default
         orientation = 0  # Default orientation (facing right)
         
-        # Draw main body - more tapered toward the tail
+        # Draw main body - oval shape for top-down view
         body_points = []
-        num_body_points = 12
+        num_body_points = 16  # More points for smoother oval
+        
+        # Create points for the oval body shape
         for i in range(num_body_points):
-            # Calculate proportional distance along body (0 to 1)
-            t = i / (num_body_points - 1)
+            angle_around = 2 * math.pi * i / num_body_points
             
-            # Taper width as we move toward tail
-            width_factor = 1 - 0.5 * (t ** 2) 
+            # Calculate distance from center based on angle
+            # Create oval shape that's longer than it is wide
+            t = abs(math.sin(angle_around))  # 0 at sides, 1 at front/back
             
-            # X coordinate goes from +body_length/2 to -body_length/2
-            x = position[0] + body_length/2 - t * body_length
-            
-            # Top and bottom points
-            if i == 0:
-                # Head is slightly rounded
-                top_y = position[1] - body_width/2 * width_factor * 0.8
-                bottom_y = position[1] + body_width/2 * width_factor * 0.8
+            # Taper the back (tail) end
+            if angle_around > math.pi / 2 and angle_around < 3 * math.pi / 2:
+                # This is the back half
+                taper_factor = 0.7  # Reduce width at tail
             else:
-                top_y = position[1] - body_width/2 * width_factor
-                bottom_y = position[1] + body_width/2 * width_factor
+                # This is the front half
+                taper_factor = 1.0  # Full width at head
             
-            body_points.append((x, top_y))
-            # Insert the bottom points in reverse order later
-            if i == num_body_points - 1:
-                body_points.append((x, bottom_y))
+            # Apply body flex to create a natural swimming motion
+            flex_amount = 0
+            is_tail_half = (angle_around > math.pi / 2 and angle_around < 3 * math.pi / 2)
+            if is_tail_half:
+                # Normalize position along tail 
+                tail_pos = (angle_around - math.pi / 2) / math.pi
+                # Apply sinusoidal curve for natural bend
+                flex_amount = body_flex * tail_pos * body_width * 0.3
+            
+            # Calculate point position
+            x = position[0] + math.cos(angle_around) * body_length/2 * taper_factor
+            y = position[1] + math.sin(angle_around) * body_width/2
+            
+            # Apply flex to position
+            if is_tail_half:
+                y += flex_amount
+                
+            body_points.append((x, y))
         
-        # Add bottom points in reverse
-        for i in range(num_body_points - 2, -1, -1):
-            t = i / (num_body_points - 1)
-            width_factor = 1 - 0.5 * (t ** 2)
-            x = position[0] + body_length/2 - t * body_length
-            bottom_y = position[1] + body_width/2 * width_factor
-            if i == 0:
-                bottom_y = position[1] + body_width/2 * width_factor * 0.8
-            body_points.append((x, bottom_y))
-        
-        # Draw the main body (custom polygon)
+        # Draw the main body
         pygame.draw.polygon(screen, color, body_points)
         
         # Generate a pattern based on the species (using hash of color)
@@ -368,254 +377,228 @@ class Renderer:
         
         # Create pattern based on type
         if pattern_type == 1:  # Two-tone (like Kohaku koi)
-            # Draw white on the top half
+            # Create points for center pattern
+            pattern_width = body_width * 0.4  # Make pattern narrower
             pattern_points = []
+            
+            # Create an inner pattern shape
             for i in range(num_body_points):
-                t = i / (num_body_points - 1)
-                width_factor = 1 - 0.5 * (t ** 2)
-                x = position[0] + body_length/2 - t * body_length
-                y = position[1] - body_width/4 * width_factor
+                angle_around = 2 * math.pi * i / num_body_points
+                
+                # Calculate distance from center
+                if angle_around > math.pi / 2 and angle_around < 3 * math.pi / 2:
+                    # This is the back half
+                    taper_factor = 0.6
+                else:
+                    # This is the front half
+                    taper_factor = 0.9
+                
+                # Calculate the point's position - smaller than the body
+                x = position[0] + math.cos(angle_around) * body_length/2 * taper_factor * 0.7
+                y = position[1] + math.sin(angle_around) * pattern_width/2
+                
+                # Apply flex to pattern
+                if angle_around > math.pi / 2 and angle_around < 3 * math.pi / 2:
+                    tail_pos = (angle_around - math.pi / 2) / math.pi
+                    flex_amount = body_flex * tail_pos * pattern_width * 0.3
+                    y += flex_amount
+                
                 pattern_points.append((x, y))
             
-            # Add center line
-            for i in range(num_body_points - 1, -1, -1):
-                t = i / (num_body_points - 1)
-                width_factor = 1 - 0.5 * (t ** 2)
-                x = position[0] + body_length/2 - t * body_length
-                pattern_points.append((x, position[1]))
-            
+            # Draw the pattern
             pygame.draw.polygon(screen, white, pattern_points)
             
         elif pattern_type == 2:  # Spotted (like Bekko koi)
-            # Add spots
-            num_spots = random.randint(3, 6)
+            # Add spots scattered across the body
+            num_spots = random.randint(3, 5)
             for _ in range(num_spots):
-                # Random position within the body
-                spot_t = random.uniform(0.1, 0.9)
-                width_factor = 1 - 0.5 * (spot_t ** 2)
-                spot_x = position[0] + body_length/2 - spot_t * body_length
-                spot_y = position[1] + random.uniform(-0.7, 0.7) * body_width/2 * width_factor
-                spot_radius = random.uniform(0.1, 0.25) * radius
+                # Random position within the oval body
+                spot_angle = random.uniform(0, 2 * math.pi)
+                spot_dist = random.uniform(0.2, 0.7) * body_length/2
                 
+                # Calculate position
+                if spot_angle > math.pi / 2 and spot_angle < 3 * math.pi / 2:
+                    spot_dist *= 0.7  # Smaller spots near tail
+                
+                # Calculate spot position
+                spot_x = position[0] + math.cos(spot_angle) * spot_dist
+                spot_y = position[1] + math.sin(spot_angle) * spot_dist * (body_width/body_length)
+                
+                # Apply flex to spots in tail area
+                if spot_angle > math.pi / 2 and spot_angle < 3 * math.pi / 2:
+                    tail_pos = (spot_angle - math.pi / 2) / math.pi
+                    flex_amount = body_flex * tail_pos * body_width * 0.3
+                    spot_y += flex_amount
+                
+                # Random spot size but smaller for scoreboard
+                spot_radius = random.uniform(0.15, 0.25) * radius
+                
+                # Draw the spot
                 pygame.draw.circle(screen, secondary_color, (spot_x, spot_y), spot_radius)
                 
         elif pattern_type == 3:  # Striped (like Showa koi)
-            # Add diagonal stripes
-            num_stripes = random.randint(3, 5)
+            # Add stripes across the body
+            num_stripes = random.randint(2, 4)
             for i in range(num_stripes):
-                stripe_t = 0.2 + (i * 0.6 / num_stripes)
-                width_factor = 1 - 0.5 * (stripe_t ** 2)
-                stripe_x = position[0] + body_length/2 - stripe_t * body_length
+                # Position stripe at intervals along body
+                stripe_pos = 0.2 + (i * 0.6 / num_stripes)
                 
-                # Alternate stripe colors
+                # Calculate stripe points
+                stripe_points = []
+                for angle_offset in [-0.3, 0.3]:  # Slightly angled stripes
+                    # Calculate position
+                    stripe_x = position[0] + (body_length/2 - stripe_pos * body_length)
+                    stripe_y = position[1] + body_width/2 * angle_offset
+                    
+                    # Apply flex if in tail area
+                    if stripe_pos > 0.5:  # If in tail half
+                        tail_pos = (stripe_pos - 0.5) * 2
+                        flex_amount = body_flex * tail_pos * body_width * 0.3
+                        stripe_y += flex_amount
+                    
+                    stripe_points.append((stripe_x, stripe_y))
+                
+                # Alternate colors
                 stripe_color = white if i % 2 == 0 else secondary_color
                 
-                # Draw diagonal stripe
-                stripe_width = radius * 0.3
+                # Draw the stripe
                 pygame.draw.line(
-                    screen, 
+                    screen,
                     stripe_color,
-                    (stripe_x - stripe_width/2, position[1] - body_width/2 * width_factor),
-                    (stripe_x + stripe_width/2, position[1] + body_width/2 * width_factor),
+                    stripe_points[0],
+                    stripe_points[1],
                     int(radius * 0.4)
                 )
         
-        # Add a lighter belly for all types
-        belly_color = (
-            min(255, r + 40),
-            min(255, g + 40),
-            min(255, b + 40)
-        )
+        # Add tail fin (fan-shaped)
+        tail_x = position[0] - body_length/2 * 0.9
         
-        belly_points = []
-        for i in range(num_body_points):
-            t = i / (num_body_points - 1)
-            width_factor = 1 - 0.5 * (t ** 2)
-            x = position[0] + body_length/2 - t * body_length
-            y = position[1]  # Center line
-            belly_points.append((x, y))
+        # Create a fan-shaped tail
+        tail_points = []
+        num_tail_points = 5
+        for i in range(num_tail_points):
+            t = i / (num_tail_points - 1)
+            tail_angle = (t - 0.5) * math.pi * 0.6
             
-            if i != num_body_points - 1:  # Skip the tail point
-                bottom_y = position[1] + body_width/2 * width_factor
-                if i == 0:
-                    bottom_y = position[1] + body_width/2 * width_factor * 0.8
-                belly_points.append((x, bottom_y))
+            # Calculate point position
+            fan_x = tail_x - math.cos(tail_angle) * radius * 0.8
+            fan_y = position[1] + math.sin(tail_angle) * radius
+            
+            # Apply body flex to tail
+            flex_amount = body_flex * body_width * 0.5
+            fan_y += flex_amount
+            
+            tail_points.append((fan_x, fan_y))
         
-        pygame.draw.polygon(screen, belly_color, belly_points, 0)
+        # Get connection points with body
+        body_idx_top = num_body_points // 4 * 3
+        body_idx_bottom = num_body_points // 4 * 1
         
-        # Add dorsal fin at the top
-        dorsal_start_x = position[0] + body_length/4
-        dorsal_start_y = position[1] - body_width/2 * 0.8
-        dorsal_mid_x = position[0]
-        dorsal_mid_y = position[1] - body_width/2 * 1.4
-        dorsal_end_x = position[0] - body_length/4
-        dorsal_end_y = position[1] - body_width/2 * 0.75
+        # Complete tail polygon
+        tail_points.insert(0, body_points[body_idx_top])
+        tail_points.append(body_points[body_idx_bottom])
         
-        pygame.draw.polygon(
-            screen, 
-            color, 
-            [(dorsal_start_x, dorsal_start_y), 
-             (dorsal_mid_x, dorsal_mid_y), 
-             (dorsal_end_x, dorsal_end_y)]
-        )
+        # Draw the tail
+        pygame.draw.polygon(screen, color, tail_points)
         
-        # Add pectoral fin on the side
-        pectoral_start_x = position[0] + body_length/4
-        pectoral_start_y = position[1] + body_width/4
-        pectoral_mid_x = position[0] + body_length/3
-        pectoral_mid_y = position[1] + body_width/2 * 1.2
-        pectoral_end_x = position[0]
-        pectoral_end_y = position[1] + body_width/4
-        
-        pygame.draw.polygon(
-            screen, 
-            color, 
-            [(pectoral_start_x, pectoral_start_y), 
-             (pectoral_mid_x, pectoral_mid_y), 
-             (pectoral_end_x, pectoral_end_y)]
-        )
-        
-        # Add a more elegant tail
-        tail_start_x = position[0] - body_length/2
-        tail_start_y = position[1]
-        
-        # Top tail fin
-        tail_top_mid_x = position[0] - body_length/2 - radius * 0.8
-        tail_top_mid_y = position[1] - radius * 0.5
-        tail_top_end_x = position[0] - body_length/2 - radius * 1.2
-        tail_top_end_y = position[1] - radius * 1.0
-        
-        # Bottom tail fin
-        tail_bottom_mid_x = position[0] - body_length/2 - radius * 0.8
-        tail_bottom_mid_y = position[1] + radius * 0.5
-        tail_bottom_end_x = position[0] - body_length/2 - radius * 1.2
-        tail_bottom_end_y = position[1] + radius * 1.0
-        
-        # Draw top part of tail
-        pygame.draw.polygon(
-            screen,
-            color,
-            [(tail_start_x, tail_start_y - radius * 0.2),
-             (tail_top_mid_x, tail_top_mid_y),
-             (tail_top_end_x, tail_top_end_y)]
-        )
-        
-        # Draw bottom part of tail
-        pygame.draw.polygon(
-            screen,
-            color,
-            [(tail_start_x, tail_start_y + radius * 0.2),
-             (tail_bottom_mid_x, tail_bottom_mid_y),
-             (tail_bottom_end_x, tail_bottom_end_y)]
-        )
-        
-        # Add stripes to the tail
-        tail_stripe_color = secondary_color
-        pygame.draw.line(
-            screen,
-            tail_stripe_color,
-            (tail_top_mid_x, tail_top_mid_y),
-            (tail_top_end_x, tail_top_end_y),
-            int(radius * 0.15)
-        )
-        
-        pygame.draw.line(
-            screen,
-            tail_stripe_color,
-            (tail_bottom_mid_x, tail_bottom_mid_y),
-            (tail_bottom_end_x, tail_bottom_end_y),
-            int(radius * 0.15)
-        )
-        
-        # Add eye
-        eye_pos = (position[0] + body_length/2 - radius * 0.3, position[1] - radius * 0.2)
-        pygame.draw.circle(screen, (255, 255, 255), eye_pos, radius * 0.25)
-        pygame.draw.circle(screen, (0, 0, 0), eye_pos, radius * 0.12)
-        
-        # Add highlight to eye
-        highlight_pos = (eye_pos[0] - radius * 0.05, eye_pos[1] - radius * 0.05)
-        pygame.draw.circle(screen, (255, 255, 255), highlight_pos, radius * 0.06)
-        
-        # Add gill marking
-        gill_x_offset = body_length/2 - radius * 0.8
-        rad_angle = math.radians(orientation)  # Using angle, not orientation in draw_koi_fish
-        gill_center_rotated = self._rotate_point((gill_x_offset, 0), (0, 0), rad_angle)
-        gill_center = (gill_center_rotated[0] + position[0], gill_center_rotated[1] + position[1])
-        
-        # Calculate gill arc angles based on fish rotation
-        gill_start_angle = rad_angle + math.pi * 0.2
-        gill_end_angle = rad_angle + math.pi * 0.8
-        
-        # Ensure gill_rect has integer coordinates and positive width/height
-        gill_rect = pygame.Rect(
-            int(gill_center[0] - radius * 0.5),
-            int(gill_center[1] - radius * 0.8),
-            max(1, int(radius)),
-            max(1, int(radius * 1.6))
-        )
-        
-        try:
-            # Ensure valid RGB color values
-            if isinstance(r, (int, float)) and isinstance(g, (int, float)) and isinstance(b, (int, float)):
-                gill_color = (max(0, min(255, int(r - 30))), 
-                             max(0, min(255, int(g - 30))), 
-                             max(0, min(255, int(b - 30))))
-                pygame.draw.arc(
+        # Add some tail fin details
+        tail_stripes = 2
+        for i in range(1, tail_stripes + 1):
+            # Draw a subtle line
+            if len(tail_points) > 4:  # Make sure we have enough points
+                p1 = tail_points[1 + i]
+                p2 = tail_points[-1 - i]
+                pygame.draw.line(
                     screen,
-                    gill_color,
-                    gill_rect,
-                    gill_start_angle,
-                    gill_end_angle,
-                    2
+                    (max(0, r - 20), max(0, g - 20), max(0, b - 20)),
+                    p1, p2, 1
                 )
-            else:
-                print(f"Warning: Invalid color component types: r={type(r)}, g={type(g)}, b={type(b)}")
-        except ValueError as e:
-            print(f"Error drawing gill arc: {e}")
-            print(f"Color values: r={r}, g={g}, b={b}")
-            print(f"Gill rect: {gill_rect}")
         
-        # Add predator features
+        # Add pectoral fins
+        fin_length = radius * 0.7
+        
+        # Top fin
+        fin1_points = []
+        body_top_idx = num_body_points // 8
+        fin_start = body_points[body_top_idx]
+        fin1_points.append(fin_start)
+        
+        # Calculate fin tip (45 degrees from body)
+        fin_tip_x = fin_start[0] + math.cos(math.pi/4) * fin_length
+        fin_tip_y = fin_start[1] + math.sin(math.pi/4) * fin_length
+        fin1_points.append((fin_tip_x, fin_tip_y))
+        
+        # End point on body
+        body_top_idx2 = (body_top_idx - 1) % num_body_points
+        fin1_points.append(body_points[body_top_idx2])
+        
+        # Draw top fin
+        pygame.draw.polygon(screen, color, fin1_points)
+        
+        # Bottom fin
+        fin2_points = []
+        body_bottom_idx = num_body_points // 8 * 7
+        fin_start = body_points[body_bottom_idx]
+        fin2_points.append(fin_start)
+        
+        # Calculate fin tip (-45 degrees from body)
+        fin_tip_x = fin_start[0] + math.cos(-math.pi/4) * fin_length
+        fin_tip_y = fin_start[1] + math.sin(-math.pi/4) * fin_length
+        fin2_points.append((fin_tip_x, fin_tip_y))
+        
+        # End point on body
+        body_bottom_idx2 = (body_bottom_idx + 1) % num_body_points
+        fin2_points.append(body_points[body_bottom_idx2])
+        
+        # Draw bottom fin
+        pygame.draw.polygon(screen, color, fin2_points)
+        
+        # Add eyes on both sides of head
+        eye_offset_x = body_length/2 * 0.7
+        eye_offset_y = body_width/2 * 0.6
+        eye_radius = radius * 0.2
+        
+        # Left eye
+        left_eye_x = position[0] + eye_offset_x
+        left_eye_y = position[1] + eye_offset_y
+        pygame.draw.circle(screen, (255, 255, 255), (left_eye_x, left_eye_y), eye_radius)
+        pygame.draw.circle(screen, (0, 0, 0), (left_eye_x, left_eye_y), eye_radius * 0.5)
+        
+        # Right eye
+        right_eye_x = position[0] + eye_offset_x
+        right_eye_y = position[1] - eye_offset_y
+        pygame.draw.circle(screen, (255, 255, 255), (right_eye_x, right_eye_y), eye_radius)
+        pygame.draw.circle(screen, (0, 0, 0), (right_eye_x, right_eye_y), eye_radius * 0.5)
+        
+        # Add highlights
+        pygame.draw.circle(screen, (255, 255, 255), 
+                         (left_eye_x - eye_radius * 0.3, left_eye_y - eye_radius * 0.3), 
+                         eye_radius * 0.2)
+        pygame.draw.circle(screen, (255, 255, 255), 
+                         (right_eye_x - eye_radius * 0.3, right_eye_y - eye_radius * 0.3), 
+                         eye_radius * 0.2)
+        
+        # For predators, add dorsal fin
         if is_predator:
-            # Enhanced gill markings
-            try:
-                # Ensure valid RGB color values
-                if isinstance(r, (int, float)) and isinstance(g, (int, float)) and isinstance(b, (int, float)):
-                    predator_gill_color = (max(0, min(255, int(r - 50))), 
-                                         max(0, min(255, int(g - 50))), 
-                                         max(0, min(255, int(b - 50))))
-                    pygame.draw.arc(
-                        screen,
-                        predator_gill_color,
-                        gill_rect,
-                        gill_start_angle,
-                        gill_end_angle,
-                        3
-                    )
-                else:
-                    print(f"Warning: Invalid predator color component types: r={type(r)}, g={type(g)}, b={type(b)}")
-            except ValueError as e:
-                print(f"Error drawing predator gill arc: {e}")
-                print(f"Color values: r={r}, g={g}, b={b}")
-                print(f"Gill rect: {gill_rect}")
+            dorsal_height = radius * 0.6
             
-            # Add teeth at mouth
-            teeth_x_offset = body_length/2
-            teeth_y_offset = radius * 0.2
+            # Draw dorsal fin (on top in top-down view)
+            dorsal_points = []
             
-            # Create triangle teeth points and rotate them
-            teeth_points = [
-                (teeth_x_offset, -teeth_y_offset),
-                (teeth_x_offset + radius * 0.2, 0),
-                (teeth_x_offset, teeth_y_offset)
-            ]
+            # Base points
+            dorsal_base1 = (position[0] + radius * 0.5, position[1])
+            dorsal_points.append(dorsal_base1)
             
-            rotated_teeth_points = []
-            for point in teeth_points:
-                rotated = self._rotate_point(point, (0, 0), rad_angle)
-                rotated_teeth_points.append((rotated[0] + position[0], rotated[1] + position[1]))
+            # Fin tip
+            dorsal_tip = (position[0], position[1] - dorsal_height)
+            dorsal_points.append(dorsal_tip)
             
-            pygame.draw.polygon(screen, (255, 255, 255), rotated_teeth_points)
+            # Other base point
+            dorsal_base2 = (position[0] - radius * 0.5, position[1])
+            dorsal_points.append(dorsal_base2)
+            
+            # Draw dorsal fin
+            pygame.draw.polygon(screen, color, dorsal_points)
 
     def _render_scoreboard(self):
         """Render the scoreboard panel."""
@@ -681,7 +664,8 @@ class Renderer:
                 koi_size,  # Use smaller fixed size
                 num_fins=3,  # Reduced number of fins for smaller fish
                 num_nodes=6,  # Reduced number of nodes for smaller fish
-                is_predator=False
+                is_predator=False,
+                body_flex=0
             )
             
             # Species name with custom color based on rank
@@ -708,15 +692,11 @@ class Renderer:
             
             y_offset += card_height + 10
 
-    def draw_koi_fish(self, screen, position, color, size, is_predator, velocity=None):
+    def draw_koi_fish(self, screen, position, color, size, is_predator, orientation=0, body_flex=0):
         x, y = position
         
-        # Calculate rotation angle based on velocity
-        angle = 0
-        if velocity is not None:
-            velocity_x, velocity_y = velocity
-            if velocity_x != 0 or velocity_y != 0:  # Only calculate angle if moving
-                angle = math.degrees(math.atan2(velocity_y, velocity_x))
+        # Use provided orientation or default to 0 (facing right)
+        angle = orientation if orientation is not None else 0
         
         # Draw vision cone (only if show_vision is True)
         if self.show_vision:
@@ -752,64 +732,56 @@ class Renderer:
         # Adjust size for consistency with the enhanced koi fish drawing
         base_radius = size * 0.8
         
-        # Calculate body dimensions
+        # Calculate body dimensions for top-down view
         body_length = base_radius * 3
-        body_width = base_radius * 1.6
+        body_width = base_radius * 1.8  # Wider for top-down view
         
-        # Create transformation matrix for rotation
+        # Convert angle to radians
         rad_angle = math.radians(angle)
-        rotation_matrix = [
-            [math.cos(rad_angle), -math.sin(rad_angle)],
-            [math.sin(rad_angle), math.cos(rad_angle)]
-        ]
         
-        # Draw main body - using polygon approach for better shape
+        # Draw main body - using oval shape for top-down view
+        # Define points for the oval body shape
+        num_body_points = 16  # More points for smoother oval
         body_points = []
-        num_body_points = 12
         
-        # Build body points without rotation first
-        unrotated_body_points = []
-        
+        # Create points for the oval body shape
         for i in range(num_body_points):
-            # Calculate proportional distance along body (0 to 1)
-            t = i / (num_body_points - 1)
+            angle_around = 2 * math.pi * i / num_body_points
             
-            # Taper width as we move toward tail
-            width_factor = 1 - 0.5 * (t ** 2)
+            # Calculate distance from center based on angle
+            # Create oval shape that's longer than it is wide
+            t = abs(math.sin(angle_around))  # 0 at sides, 1 at front/back
             
-            # X coordinate goes from +body_length/2 to -body_length/2
-            # Center at (0,0) for easier rotation
-            point_x = body_length/2 - t * body_length
-            
-            # Top and bottom points
-            if i == 0:
-                # Head is slightly rounded
-                top_y = -body_width/2 * width_factor * 0.8
+            # Taper the back (tail) end
+            if angle_around > math.pi / 2 and angle_around < 3 * math.pi / 2:
+                # This is the back half
+                taper_factor = 0.7  # Reduce width at tail
             else:
-                top_y = -body_width/2 * width_factor
-            
-            unrotated_body_points.append((point_x, top_y))
-            
-            # Add tail endpoint for bottom curve
-            if i == num_body_points - 1:
-                unrotated_body_points.append((point_x, 0))
-        
-        # Add bottom points in reverse
-        for i in range(num_body_points - 2, -1, -1):
-            t = i / (num_body_points - 1)
-            width_factor = 1 - 0.5 * (t ** 2)
-            point_x = body_length/2 - t * body_length
-            
-            if i == 0:
-                bottom_y = body_width/2 * width_factor * 0.8
-            else:
-                bottom_y = body_width/2 * width_factor
+                # This is the front half
+                taper_factor = 1.0  # Full width at head
                 
-            unrotated_body_points.append((point_x, bottom_y))
-        
-        # Rotate and translate all body points
-        for point in unrotated_body_points:
-            rotated_point = self._rotate_point(point, (0, 0), rad_angle)
+            # Apply body flex to create a natural swimming motion
+            # The flex should bend the fish's body, more pronounced at the tail
+            flex_amount = 0
+            # Determine if this point is in the tail half
+            is_tail_half = (angle_around > math.pi / 2 and angle_around < 3 * math.pi / 2)
+            if is_tail_half:
+                # Normalize position along tail (0 at middle, 1 at tail end)
+                tail_pos = (angle_around - math.pi / 2) / math.pi
+                # Apply sinusoidal curve for natural bend
+                flex_amount = body_flex * tail_pos * body_width * 0.4
+            
+            # Calculate the point's position
+            dx = math.cos(angle_around) * body_length/2 * taper_factor
+            dy = math.sin(angle_around) * body_width/2
+            
+            # Apply flex to x-position
+            if is_tail_half:
+                dy += flex_amount
+            
+            # Rotate the point
+            rotated_point = self._rotate_point((dx, dy), (0, 0), rad_angle)
+            # Translate to final position
             body_points.append((rotated_point[0] + x, rotated_point[1] + y))
         
         # Draw the main body
@@ -828,275 +800,257 @@ class Renderer:
         # White for traditional koi patterns
         white = (255, 255, 255)
         
-        # Apply patterns based on rotation
+        # Apply patterns based on pattern type
         if pattern_type == 1:  # Two-tone (Kohaku)
-            # Create points for two-tone pattern
+            # Create points for center pattern
+            pattern_width = body_width * 0.4  # Make pattern narrower
             pattern_points = []
             
-            # Top white pattern
+            # Create an inner pattern shape
             for i in range(num_body_points):
-                t = i / (num_body_points - 1)
-                width_factor = 1 - 0.5 * (t ** 2)
-                point_x = body_length/2 - t * body_length
-                point_y = -body_width/4 * width_factor
+                angle_around = 2 * math.pi * i / num_body_points
                 
-                # Rotate and translate
-                rotated = self._rotate_point((point_x, point_y), (0, 0), rad_angle)
-                pattern_points.append((rotated[0] + x, rotated[1] + y))
-            
-            # Add center line
-            for i in range(num_body_points - 1, -1, -1):
-                t = i / (num_body_points - 1)
-                point_x = body_length/2 - t * body_length
+                # Calculate distance from center
+                if angle_around > math.pi / 2 and angle_around < 3 * math.pi / 2:
+                    # This is the back half
+                    taper_factor = 0.6  # Taper more for pattern
+                else:
+                    # This is the front half
+                    taper_factor = 0.9
+                    
+                # Calculate the point's position - smaller than the body
+                dx = math.cos(angle_around) * body_length/2 * taper_factor * 0.7
+                dy = math.sin(angle_around) * pattern_width/2 * 0.8
                 
-                # Rotate and translate
-                rotated = self._rotate_point((point_x, 0), (0, 0), rad_angle)
-                pattern_points.append((rotated[0] + x, rotated[1] + y))
+                # Apply same flex to pattern
+                if angle_around > math.pi / 2 and angle_around < 3 * math.pi / 2:
+                    # Normalize position along tail (0 at middle, 1 at tail end)
+                    tail_pos = (angle_around - math.pi / 2) / math.pi
+                    flex_amount = body_flex * tail_pos * pattern_width * 0.4
+                    dy += flex_amount
+                
+                # Rotate the point
+                rotated_point = self._rotate_point((dx, dy), (0, 0), rad_angle)
+                # Translate to final position
+                pattern_points.append((rotated_point[0] + x, rotated_point[1] + y))
             
+            # Draw the pattern
             pygame.draw.polygon(screen, white, pattern_points)
             
         elif pattern_type == 2:  # Spotted (Bekko)
-            # Add spots
-            num_spots = random.randint(3, 6)
+            # Add spots scattered across the body
+            num_spots = random.randint(4, 8)
             for _ in range(num_spots):
-                # Random position within body
-                spot_t = random.uniform(0.1, 0.9)
-                width_factor = 1 - 0.5 * (spot_t ** 2)
-                spot_x = body_length/2 - spot_t * body_length
-                spot_y = random.uniform(-0.7, 0.7) * body_width/2 * width_factor
+                # Random position within oval body
+                spot_angle = random.uniform(0, 2 * math.pi)
+                spot_dist = random.uniform(0.2, 0.7) * body_length/2  # Distance from center
                 
-                # Rotate and translate
-                rotated = self._rotate_point((spot_x, spot_y), (0, 0), rad_angle)
-                spot_pos = (rotated[0] + x, rotated[1] + y)
-                spot_radius = random.uniform(0.1, 0.25) * base_radius
+                # Calculate position and apply taper if in tail area
+                if spot_angle > math.pi / 2 and spot_angle < 3 * math.pi / 2:
+                    spot_dist *= 0.7  # Spots smaller near tail
                 
+                # Calculate spot position
+                spot_x = math.cos(spot_angle) * spot_dist
+                spot_y = math.sin(spot_angle) * spot_dist * (body_width/body_length)
+                
+                # Apply flex to spots in tail area
+                if spot_angle > math.pi / 2 and spot_angle < 3 * math.pi / 2:
+                    tail_pos = (spot_angle - math.pi / 2) / math.pi
+                    flex_amount = body_flex * tail_pos * body_width * 0.4
+                    spot_y += flex_amount
+                
+                # Rotate spot position
+                rotated_spot = self._rotate_point((spot_x, spot_y), (0, 0), rad_angle)
+                spot_pos = (rotated_spot[0] + x, rotated_spot[1] + y)
+                
+                # Random spot size
+                spot_radius = random.uniform(0.15, 0.3) * base_radius
+                
+                # Draw the spot
                 pygame.draw.circle(screen, secondary_color, spot_pos, spot_radius)
                 
         elif pattern_type == 3:  # Striped (Showa)
-            # Add diagonal stripes
+            # Add stripes across the body
             num_stripes = random.randint(3, 5)
             for i in range(num_stripes):
-                stripe_t = 0.2 + (i * 0.6 / num_stripes)
-                width_factor = 1 - 0.5 * (stripe_t ** 2)
-                stripe_x = body_length/2 - stripe_t * body_length
+                # Position stripe at even intervals along body
+                stripe_pos = 0.2 + (i * 0.6 / num_stripes)  # Position along body length
                 
-                # Start and end points for the stripe
-                stripe_top = (stripe_x, -body_width/2 * width_factor)
-                stripe_bottom = (stripe_x, body_width/2 * width_factor)
-                
-                # Rotate and translate
-                rotated_top = self._rotate_point(stripe_top, (0, 0), rad_angle)
-                rotated_bottom = self._rotate_point(stripe_bottom, (0, 0), rad_angle)
+                # Stripe points - draw a line across the body
+                stripe_points = []
+                for angle_offset in [-0.3, 0.3]:  # Slightly angled stripes
+                    # Calculate position
+                    stripe_x = body_length/2 - stripe_pos * body_length
+                    stripe_y = body_width/2 * angle_offset
+                    
+                    # Apply flex if in tail area
+                    if stripe_pos > 0.5:  # If in the tail half
+                        tail_pos = (stripe_pos - 0.5) * 2  # Normalize to 0-1
+                        flex_amount = body_flex * tail_pos * body_width * 0.4
+                        stripe_y += flex_amount
+                    
+                    # Rotate and translate
+                    rotated_point = self._rotate_point((stripe_x, stripe_y), (0, 0), rad_angle)
+                    stripe_points.append((rotated_point[0] + x, rotated_point[1] + y))
                 
                 # Alternate stripe colors
                 stripe_color = white if i % 2 == 0 else secondary_color
                 
+                # Draw the stripe with thickness
                 pygame.draw.line(
                     screen,
                     stripe_color,
-                    (rotated_top[0] + x, rotated_top[1] + y),
-                    (rotated_bottom[0] + x, rotated_bottom[1] + y),
+                    stripe_points[0],
+                    stripe_points[1],
                     int(base_radius * 0.4)
                 )
         
-        # Add lighter belly
-        belly_color = (
-            min(255, r + 40),
-            min(255, g + 40),
-            min(255, b + 40)
-        )
+        # Add tail fin detail (fan-shaped)
+        tail_points = []
+        tail_x = -body_length/2 * 0.9  # Slightly inside the body to connect nicely
         
-        # Create belly points
-        belly_points = []
-        for i in range(num_body_points):
-            t = i / (num_body_points - 1)
-            width_factor = 1 - 0.5 * (t ** 2)
-            point_x = body_length/2 - t * body_length
+        # Create a fan-shaped tail
+        num_tail_points = 5
+        for i in range(num_tail_points):
+            # Calculate positions on a fan curve
+            t = i / (num_tail_points - 1)  # 0 to 1
+            tail_angle = (t - 0.5) * math.pi * 0.6  # -30 to +30 degrees
             
-            # Center point
-            center_rotated = self._rotate_point((point_x, 0), (0, 0), rad_angle)
-            belly_points.append((center_rotated[0] + x, center_rotated[1] + y))
+            # Calculate point position
+            fan_x = tail_x - math.cos(tail_angle) * base_radius * 0.9
+            fan_y = math.sin(tail_angle) * base_radius * 1.2
             
-            # Only add bottom points, not at tail tip
-            if i != num_body_points - 1:
-                if i == 0:
-                    bottom_y = body_width/2 * width_factor * 0.8
-                else:
-                    bottom_y = body_width/2 * width_factor
-                    
-                bottom_rotated = self._rotate_point((point_x, bottom_y), (0, 0), rad_angle)
-                belly_points.append((bottom_rotated[0] + x, bottom_rotated[1] + y))
+            # Apply body flex to tail
+            flex_amount = body_flex * body_width * 0.6
+            fan_y += flex_amount
+            
+            # Rotate and translate
+            rotated_point = self._rotate_point((fan_x, fan_y), (0, 0), rad_angle)
+            tail_points.append((rotated_point[0] + x, rotated_point[1] + y))
         
-        pygame.draw.polygon(screen, belly_color, belly_points, 0)
+        # Get the connection points with the body (where the tail meets the body)
+        body_connection_top = body_points[num_body_points // 4 * 3]  # Approx. position
+        body_connection_bottom = body_points[num_body_points // 4 * 1]  # Approx. position
         
-        # Add fins
-        # Dorsal fin
-        dorsal_points = []
-        dorsal_start = (body_length/4, -body_width/2 * 0.8)
-        dorsal_mid = (0, -body_width/2 * 1.4)
-        dorsal_end = (-body_length/4, -body_width/2 * 0.75)
+        # Complete the tail polygon
+        tail_points.insert(0, body_connection_top)
+        tail_points.append(body_connection_bottom)
         
-        for point in [dorsal_start, dorsal_mid, dorsal_end]:
-            rotated = self._rotate_point(point, (0, 0), rad_angle)
-            dorsal_points.append((rotated[0] + x, rotated[1] + y))
+        # Draw the tail
+        pygame.draw.polygon(screen, color, tail_points)
         
-        pygame.draw.polygon(screen, color, dorsal_points)
+        # Add some tail fin details/lines
+        tail_stripes = 3
+        for i in range(1, tail_stripes):
+            t = i / tail_stripes
+            # Middle points on the fan
+            p1 = tail_points[1 + i]
+            p2 = tail_points[-2 - i]
+            # Draw a subtle line
+            pygame.draw.line(
+                screen,
+                (max(0, r - 20), max(0, g - 20), max(0, b - 20)),  # Slightly darker
+                p1, p2, 1
+            )
         
-        # Pectoral fin
-        pectoral_points = []
-        pectoral_start = (body_length/4, body_width/4)
-        pectoral_mid = (body_length/3, body_width/2 * 1.2)
-        pectoral_end = (0, body_width/4)
+        # Add pectoral fins on sides
+        fin_start_x = body_length/4  # Position along body
+        fin_length = base_radius * 0.9
         
-        for point in [pectoral_start, pectoral_mid, pectoral_end]:
-            rotated = self._rotate_point(point, (0, 0), rad_angle)
-            pectoral_points.append((rotated[0] + x, rotated[1] + y))
+        # Top fin
+        fin1_points = []
+        # Start point on body
+        body_top_idx = num_body_points // 8
+        fin_start_point = body_points[body_top_idx]
+        fin1_points.append(fin_start_point)
         
-        pygame.draw.polygon(screen, color, pectoral_points)
+        # Fin tip
+        fin_angle = rad_angle + math.pi/4  # 45 degrees from body
+        fin_tip_x = fin_start_point[0] + math.cos(fin_angle) * fin_length
+        fin_tip_y = fin_start_point[1] + math.sin(fin_angle) * fin_length
+        fin1_points.append((fin_tip_x, fin_tip_y))
         
-        # Tail fins
-        # Top tail fin
-        tail_top_points = []
-        tail_start = (-body_length/2, -base_radius * 0.2)
-        tail_top_mid = (-body_length/2 - base_radius * 0.8, -base_radius * 0.5)
-        tail_top_end = (-body_length/2 - base_radius * 1.2, -base_radius * 1.0)
+        # End point on body
+        body_top_idx2 = num_body_points // 8 - 1
+        fin1_points.append(body_points[body_top_idx2 if body_top_idx2 >= 0 else body_top_idx2 + num_body_points])
         
-        for point in [tail_start, tail_top_mid, tail_top_end]:
-            rotated = self._rotate_point(point, (0, 0), rad_angle)
-            tail_top_points.append((rotated[0] + x, rotated[1] + y))
+        # Draw top pectoral fin
+        pygame.draw.polygon(screen, color, fin1_points)
         
-        pygame.draw.polygon(screen, color, tail_top_points)
+        # Bottom fin
+        fin2_points = []
+        # Start point on body
+        body_bottom_idx = num_body_points // 8 * 7
+        fin_start_point = body_points[body_bottom_idx]
+        fin2_points.append(fin_start_point)
         
-        # Bottom tail fin
-        tail_bottom_points = []
-        tail_start = (-body_length/2, base_radius * 0.2)
-        tail_bottom_mid = (-body_length/2 - base_radius * 0.8, base_radius * 0.5)
-        tail_bottom_end = (-body_length/2 - base_radius * 1.2, base_radius * 1.0)
+        # Fin tip
+        fin_angle = rad_angle - math.pi/4  # -45 degrees from body
+        fin_tip_x = fin_start_point[0] + math.cos(fin_angle) * fin_length
+        fin_tip_y = fin_start_point[1] + math.sin(fin_angle) * fin_length
+        fin2_points.append((fin_tip_x, fin_tip_y))
         
-        for point in [tail_start, tail_bottom_mid, tail_bottom_end]:
-            rotated = self._rotate_point(point, (0, 0), rad_angle)
-            tail_bottom_points.append((rotated[0] + x, rotated[1] + y))
+        # End point on body
+        body_bottom_idx2 = num_body_points // 8 * 7 + 1
+        fin2_points.append(body_points[body_bottom_idx2 % num_body_points])
         
-        pygame.draw.polygon(screen, color, tail_bottom_points)
+        # Draw bottom pectoral fin
+        pygame.draw.polygon(screen, color, fin2_points)
         
-        # Add stripes to tail
-        top_mid_rotated = self._rotate_point(tail_top_mid, (0, 0), rad_angle)
-        top_end_rotated = self._rotate_point(tail_top_end, (0, 0), rad_angle)
-        bottom_mid_rotated = self._rotate_point(tail_bottom_mid, (0, 0), rad_angle)
-        bottom_end_rotated = self._rotate_point(tail_bottom_end, (0, 0), rad_angle)
+        # Add eyes - for top-down view, eyes are on both sides of the head
+        eye_offset_x = body_length/2 * 0.7  # Near the head
+        eye_offset_y = body_width/2 * 0.6  # Slightly inside body edge
+        eye_radius = base_radius * 0.2
         
-        pygame.draw.line(
-            screen,
-            secondary_color,
-            (top_mid_rotated[0] + x, top_mid_rotated[1] + y),
-            (top_end_rotated[0] + x, top_end_rotated[1] + y),
-            int(base_radius * 0.15)
-        )
+        # Left eye position (rotated)
+        left_eye_pos = self._rotate_point((eye_offset_x, eye_offset_y), (0, 0), rad_angle)
+        left_eye_pos = (left_eye_pos[0] + x, left_eye_pos[1] + y)
         
-        pygame.draw.line(
-            screen,
-            secondary_color,
-            (bottom_mid_rotated[0] + x, bottom_mid_rotated[1] + y),
-            (bottom_end_rotated[0] + x, bottom_end_rotated[1] + y),
-            int(base_radius * 0.15)
-        )
+        # Right eye position (rotated)
+        right_eye_pos = self._rotate_point((eye_offset_x, -eye_offset_y), (0, 0), rad_angle)
+        right_eye_pos = (right_eye_pos[0] + x, right_eye_pos[1] + y)
         
-        # Add eye
-        eye_x_offset = body_length/2 - base_radius * 0.3
-        eye_y_offset = -base_radius * 0.2
-        eye_rotated = self._rotate_point((eye_x_offset, eye_y_offset), (0, 0), rad_angle)
-        eye_pos = (eye_rotated[0] + x, eye_rotated[1] + y)
+        # Draw eyes
+        pygame.draw.circle(screen, (255, 255, 255), left_eye_pos, eye_radius)
+        pygame.draw.circle(screen, (255, 255, 255), right_eye_pos, eye_radius)
         
-        pygame.draw.circle(screen, (255, 255, 255), eye_pos, base_radius * 0.25)
-        pygame.draw.circle(screen, (0, 0, 0), eye_pos, base_radius * 0.12)
+        # Add pupils
+        pygame.draw.circle(screen, (0, 0, 0), left_eye_pos, eye_radius * 0.5)
+        pygame.draw.circle(screen, (0, 0, 0), right_eye_pos, eye_radius * 0.5)
         
-        # Add highlight to eye
-        highlight_offset = (-base_radius * 0.05, -base_radius * 0.05)
-        highlight_rotated = self._rotate_point(
-            (eye_x_offset + highlight_offset[0], eye_y_offset + highlight_offset[1]), 
-            (0, 0), 
-            rad_angle
-        )
-        highlight_pos = (highlight_rotated[0] + x, highlight_rotated[1] + y)
-        pygame.draw.circle(screen, (255, 255, 255), highlight_pos, base_radius * 0.06)
-        
-        # Add gill marking
-        gill_x_offset = body_length/2 - base_radius * 0.8
-        rad_angle = math.radians(angle)  # Using angle, not orientation in draw_koi_fish
-        gill_center_rotated = self._rotate_point((gill_x_offset, 0), (0, 0), rad_angle)
-        gill_center = (gill_center_rotated[0] + x, gill_center_rotated[1] + y)
-        
-        # Calculate gill arc angles based on fish rotation
-        gill_start_angle = rad_angle + math.pi * 0.2
-        gill_end_angle = rad_angle + math.pi * 0.8
-        
-        # Ensure gill_rect has integer coordinates and positive width/height
-        gill_rect = pygame.Rect(
-            int(gill_center[0] - base_radius * 0.5),
-            int(gill_center[1] - base_radius * 0.8),
-            max(1, int(base_radius)),
-            max(1, int(base_radius * 1.6))
-        )
-        
-        try:
-            # Ensure valid RGB color values
-            if isinstance(r, (int, float)) and isinstance(g, (int, float)) and isinstance(b, (int, float)):
-                gill_color = (max(0, min(255, int(r - 30))), 
-                             max(0, min(255, int(g - 30))), 
-                             max(0, min(255, int(b - 30))))
-                pygame.draw.arc(
-                    screen,
-                    gill_color,
-                    gill_rect,
-                    gill_start_angle,
-                    gill_end_angle,
-                    2
-                )
-            else:
-                print(f"Warning: Invalid color component types: r={type(r)}, g={type(g)}, b={type(b)}")
-        except ValueError as e:
-            print(f"Error drawing gill arc: {e}")
-            print(f"Color values: r={r}, g={g}, b={b}")
-            print(f"Gill rect: {gill_rect}")
-        
-        # Add predator features
+        # Add highlights to eyes
+        highlight_offset = eye_radius * 0.3
+        pygame.draw.circle(screen, (255, 255, 255), 
+                          (left_eye_pos[0] - highlight_offset, left_eye_pos[1] - highlight_offset), 
+                          eye_radius * 0.25)
+        pygame.draw.circle(screen, (255, 255, 255), 
+                          (right_eye_pos[0] - highlight_offset, right_eye_pos[1] - highlight_offset), 
+                          eye_radius * 0.25)
+                          
+        # Add predator features if needed
         if is_predator:
-            # Enhanced gill markings
-            try:
-                # Ensure valid RGB color values
-                if isinstance(r, (int, float)) and isinstance(g, (int, float)) and isinstance(b, (int, float)):
-                    predator_gill_color = (max(0, min(255, int(r - 50))), 
-                                         max(0, min(255, int(g - 50))), 
-                                         max(0, min(255, int(b - 50))))
-                    pygame.draw.arc(
-                        screen,
-                        predator_gill_color,
-                        gill_rect,
-                        gill_start_angle,
-                        gill_end_angle,
-                        3
-                    )
-                else:
-                    print(f"Warning: Invalid predator color component types: r={type(r)}, g={type(g)}, b={type(b)}")
-            except ValueError as e:
-                print(f"Error drawing predator gill arc: {e}")
-                print(f"Color values: r={r}, g={g}, b={b}")
-                print(f"Gill rect: {gill_rect}")
+            # For predators, add more pronounced fins
+            dorsal_x = 0  # Center of body
+            dorsal_y = 0  # Center of body
+            dorsal_height = base_radius * 0.7
             
-            # Add teeth at mouth
-            teeth_x_offset = body_length/2
-            teeth_y_offset = base_radius * 0.2
+            # Draw predator dorsal fin (on top in top-down view)
+            dorsal_points = []
             
-            # Create triangle teeth points and rotate them
-            teeth_points = [
-                (teeth_x_offset, -teeth_y_offset),
-                (teeth_x_offset + base_radius * 0.2, 0),
-                (teeth_x_offset, teeth_y_offset)
-            ]
+            # Base points on body
+            dorsal_base1 = self._rotate_point((dorsal_x + base_radius * 0.5, 0), (0, 0), rad_angle)
+            dorsal_base1 = (dorsal_base1[0] + x, dorsal_base1[1] + y)
+            dorsal_points.append(dorsal_base1)
             
-            rotated_teeth_points = []
-            for point in teeth_points:
-                rotated = self._rotate_point(point, (0, 0), rad_angle)
-                rotated_teeth_points.append((rotated[0] + x, rotated[1] + y))
+            # Fin tip
+            dorsal_tip = self._rotate_point((dorsal_x, -dorsal_height), (0, 0), rad_angle)
+            dorsal_tip = (dorsal_tip[0] + x, dorsal_tip[1] + y)
+            dorsal_points.append(dorsal_tip)
             
-            pygame.draw.polygon(screen, (255, 255, 255), rotated_teeth_points)
+            # Other base point
+            dorsal_base2 = self._rotate_point((dorsal_x - base_radius * 0.5, 0), (0, 0), rad_angle)
+            dorsal_base2 = (dorsal_base2[0] + x, dorsal_base2[1] + y)
+            dorsal_points.append(dorsal_base2)
+            
+            # Draw the dorsal fin
+            pygame.draw.polygon(screen, color, dorsal_points)
