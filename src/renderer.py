@@ -752,12 +752,12 @@ class Renderer:
             # Create oval shape that's longer than it is wide
             t = abs(math.sin(angle_around))  # 0 at sides, 1 at front/back
             
-            # Taper the back (tail) end
+            # Taper the back (tail) end - tail should be at pi (left when orientation is 0)
             if angle_around > math.pi / 2 and angle_around < 3 * math.pi / 2:
-                # This is the back half
+                # This is the back half (tail end at pi)
                 taper_factor = 0.7  # Reduce width at tail
             else:
-                # This is the front half
+                # This is the front half (head end at 0)
                 taper_factor = 1.0  # Full width at head
                 
             # Apply body flex to create a natural swimming motion
@@ -906,10 +906,11 @@ class Renderer:
                 )
         
         # Add tail fin detail (fan-shaped)
-        tail_points = []
+        # Position tail at pi (left/back when orientation is 0)
         tail_x = -body_length/2 * 0.9  # Slightly inside the body to connect nicely
         
         # Create a fan-shaped tail
+        tail_points = []
         num_tail_points = 5
         for i in range(num_tail_points):
             # Calculate positions on a fan curve
@@ -929,8 +930,9 @@ class Renderer:
             tail_points.append((rotated_point[0] + x, rotated_point[1] + y))
         
         # Get the connection points with the body (where the tail meets the body)
-        body_connection_top = body_points[num_body_points // 4 * 3]  # Approx. position
-        body_connection_bottom = body_points[num_body_points // 4 * 1]  # Approx. position
+        # Use the points closest to π (pi) for the tail connection (back of the koi)
+        body_connection_top = body_points[num_body_points // 4 * 3]  # Approx. position at 3π/4
+        body_connection_bottom = body_points[num_body_points // 4 * 1]  # Approx. position at 5π/4
         
         # Complete the tail polygon
         tail_points.insert(0, body_connection_top)
@@ -939,7 +941,7 @@ class Renderer:
         # Draw the tail
         pygame.draw.polygon(screen, color, tail_points)
         
-        # Add some tail fin details/lines
+        # Add some tail fin details
         tail_stripes = 3
         for i in range(1, tail_stripes):
             t = i / tail_stripes
@@ -954,7 +956,8 @@ class Renderer:
             )
         
         # Add pectoral fins on sides
-        fin_start_x = body_length/4  # Position along body
+        # Fins should be placed at the front half of the body (near the head)
+        fin_start_x = body_length/4  # Position along body, positive is toward head
         fin_length = base_radius * 0.9
         
         # Top fin
@@ -998,7 +1001,8 @@ class Renderer:
         pygame.draw.polygon(screen, color, fin2_points)
         
         # Add eyes - for top-down view, eyes are on both sides of the head
-        eye_offset_x = body_length/2 * 0.7  # Near the head
+        # Eyes should be positioned at the front (head) of the fish
+        eye_offset_x = body_length/2 * 0.7  # Near the head (positive direction)
         eye_offset_y = body_width/2 * 0.6  # Slightly inside body edge
         eye_radius = base_radius * 0.2
         
